@@ -1,0 +1,20 @@
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>info.danbecker</groupId>
+  <artifactId>pdfCL</artifactId>
+  <version>0.0.1-SNAPSHOT</version>
+  <name>PDF Command Line</name>
+  <description>Tools for manipulating PDF files</description>
+  <dependencies>
+  	<dependency>
+  		<groupId>com.itextpdf</groupId>
+  		<artifactId>kernel</artifactId>
+  		<version>7.1.2</version>
+  	</dependency>
+  	<dependency>
+  		<groupId>com.itextpdf</groupId>
+  		<artifactId>layout</artifactId>
+  		<version>7.1.2</version>
+  	</dependency>
+  </dependencies>
+</project>
