@@ -13,8 +13,12 @@ import org.apache.commons.cli.ParseException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import com.itextpdf.kernel.pdf.IPdfPageExtraCopier;
 import com.itextpdf.kernel.pdf.PdfDocument;
+import com.itextpdf.kernel.pdf.PdfPage;
+import com.itextpdf.kernel.pdf.PdfReader;
 import com.itextpdf.kernel.pdf.PdfWriter;
+import com.itextpdf.kernel.utils.PdfMerger;
 import com.itextpdf.layout.Document;
 import com.itextpdf.layout.element.AreaBreak;
 import com.itextpdf.layout.element.Paragraph;
@@ -25,10 +29,12 @@ public class PdfCL {
     public static final Logger LOGGER = LoggerFactory.getLogger(PdfCL.class);
     
     public static final String SRC = "resources/input.pdf";
+    public static final String SRC2 = "resources/input2.pdf";
     public static final String DEST = "resources/output.pdf";
     
     protected static String verb;
     protected static String src;
+    protected static String src2;
     protected static String dest;
     
     // Constructors
@@ -60,10 +66,12 @@ public class PdfCL {
         options.addOption("h", "help", false, "print the command line options");
         options.addOption("v", "verb", true, "action to perform");
         options.addOption("s", "src", true, "input PDF file");
+        options.addOption("s2", "src2", true, "input PDF file");
         options.addOption("d", "dest", true, "output PDF file");
 
         final CommandLineParser cliParser = new DefaultParser();
         final CommandLine line = cliParser.parse(options, args);
+        // line.getArgList(); // Retrieve any left-over non-recognized options and arguments
         
         List<String> list =  line.getArgList();
         LOGGER.info("arg count=" + list.size());            
@@ -87,6 +95,12 @@ public class PdfCL {
             src = SRC;
         }
         LOGGER.info("src=" + src);
+        if (line.hasOption("src2")) {
+            src2 = line.getOptionValue("src2");
+        } else {
+            src2 = SRC2;
+        }
+        LOGGER.info("src2=" + src2);
         if (line.hasOption("dest")) {
             dest = line.getOptionValue("dest");
         } else {
@@ -95,6 +109,12 @@ public class PdfCL {
         LOGGER.info("dest=" + dest);
     }
     
+    /** 
+     * Creates a dummy PDF
+     * @param dest output file name
+     * @param numPages number of pages
+     * @throws IOException
+     */
     public void createPdf(String dest, int numPages) throws IOException {
         File file = new File(dest);
         file.getParentFile().mkdirs();
@@ -118,5 +138,29 @@ public class PdfCL {
         //Close document
         document.close();
         LOGGER.info( "\"" + dest + "\" created");
+    }
+    
+    public void mergePdf(String src1, String src2, String dest) throws IOException {
+        PdfDocument pdfDest= new PdfDocument(new PdfWriter(dest));
+        PdfDocument pdfSrc1 = new PdfDocument(new PdfReader(src1));
+        PdfDocument pdfSrc2 = new PdfDocument(new PdfReader(src2));
+        
+        PdfMerger merger = new PdfMerger(pdfDest);
+        merger.merge(pdfSrc1, 1, 1);
+        merger.merge(pdfSrc2, 1, pdfSrc2.getNumberOfPages());
+        
+        pdfDest.close();
+        pdfSrc1.close();
+        pdfSrc2.close();
+    }
+    
+    public void appendPdf(String src1, String src2, String dest) throws IOException {
+        PdfDocument pdfDest = new PdfDocument(new PdfReader(src1), new PdfWriter(dest));
+        PdfDocument cover = new PdfDocument(new PdfReader(src2));
+        // cover.copyPagesTo(1, 1, pdfDest, 1, new PdfPageFormCopier());
+        // cover.copyPagesTo(1, 1, pdfDest, 1, new IPdfPageExtraCopier());
+        // cover.copyPagesTo(1, 1, pdfDest, 1, new PdfPage());
+        cover.close();
+        pdfDest.close();
     }
 }
