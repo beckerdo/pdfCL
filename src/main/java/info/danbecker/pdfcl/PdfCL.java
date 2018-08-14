@@ -2,6 +2,8 @@ package info.danbecker.pdfcl;
 
 import java.io.File;
 import java.io.IOException;
+import java.nio.file.Files;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.LinkedList;
 import java.util.List;
@@ -15,9 +17,11 @@ import org.apache.commons.cli.ParseException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import com.itextpdf.io.source.RandomAccessSourceFactory;
 import com.itextpdf.kernel.pdf.PdfDocument;
 import com.itextpdf.kernel.pdf.PdfReader;
 import com.itextpdf.kernel.pdf.PdfWriter;
+import com.itextpdf.kernel.pdf.ReaderProperties;
 import com.itextpdf.kernel.utils.PdfMerger;
 
 import com.itextpdf.layout.Document;
@@ -48,18 +52,21 @@ public class PdfCL {
         
         if ( null != verb && verb.length() > 0) {
             switch ( verb ) {
-            case "create": {
-                new PdfCL().createPdf( dest, number );
-                break;
-            }
-            case "append": {
-                new PdfCL().appendPdf( src, dest, list );
-                break;
-            }
+                case "create": {
+                    new PdfCL().createPdf( dest, number );
+                    break;
+                }
+                case "append": {
+                    new PdfCL().appendPdf( src, dest, list );
+                    break;
+                }
+                case "reverse": {
+                    new PdfCL().reversePdf( dest );
+                    break;
+                }
                 default: {
                     LOGGER.info("verb \"" + verb + "\" is unknown");                   
-                }
-        
+                }       
             }
         }
         LOGGER.info( "exiting" );
@@ -95,10 +102,10 @@ public class PdfCL {
         }
         if (line.hasOption("src")) {
             src = line.getOptionValue("src");
+            LOGGER.info("src=" + src);
         } else {
             src = SRC;
         }
-        LOGGER.info("src=" + src);
         if (line.hasOption("src2")) {
             src2 = line.getOptionValue("src2");
             LOGGER.info("src2=" + src2);
@@ -169,21 +176,71 @@ public class PdfCL {
     
     public void appendPdf(String src, String dest, List<Integer> pagesToMerge) throws IOException {
         File file = new File(dest);
-        file.getParentFile().mkdirs();        
+        file.getParentFile().mkdirs();       
+        
         PdfDocument pdfDest = new PdfDocument(new PdfWriter(dest));
-        // PdfDocument pdfDest = new PdfDocument(new PdfReader(dest), new PdfWriter(dest));
         PdfDocument pdfSrc = new PdfDocument(new PdfReader(src));
 
-        PdfMerger merger = new PdfMerger(pdfDest); // cannot append to existing doc
-        // merger.merge(pdfDest, 1, pdfDest.getNumberOfPages());
-        merger.merge(pdfSrc, pagesToMerge);
-        // pdfSrc.copyPagesTo( pagesToMerge, pdfDest);
+        pdfSrc.copyPagesTo( pagesToMerge, pdfDest);
         
         pdfSrc.close();
         pdfDest.close();
     }
 
-    public void mergePdf(String src1, String src2, String dest) throws IOException {
+//    public void appendPdf(String src, String dest, List<Integer> pagesToMerge) throws IOException {
+//        File file = new File(dest);
+//        file.getParentFile().mkdirs();
+//        
+//        
+//        PdfDocument pdfOriginalPages = null;
+//        if (file.exists() && file.length() > 0) {
+//            pdfOriginalPages = new PdfDocument(new PdfReader(dest));
+//        }
+//        PdfDocument pdfDest = new PdfDocument(new PdfWriter(dest));
+//        // PdfDocument pdfDest = new PdfDocument(new PdfReader(dest), new PdfWriter(dest));
+//        PdfDocument pdfSrc = new PdfDocument(new PdfReader(src));
+//
+//        PdfMerger merger = new PdfMerger(pdfDest); // cannot append to existing doc
+//        if (file.exists() && file.length() > 0) {
+//            merger.merge(pdfDest, 1, pdfOriginalPages.getNumberOfPages());
+//        }
+//        merger.merge(pdfSrc, pagesToMerge);
+//        // pdfSrc.copyPagesTo( pagesToMerge, pdfDest);
+//        
+//        if (file.exists() && file.length() > 0) {
+//            pdfOriginalPages.close();
+//        }
+//        pdfSrc.close();
+//        pdfDest.close();
+//    }
+
+    protected void reversePdf(String dest) throws Exception {
+        File src = new File( dest );
+        if ( !src.exists() || src.length() < 1) {
+            LOGGER.info( "File \"" + dest + "\" exists=" + src.exists() + ", length=" + src.length());
+            return;
+        }
+        byte[] byteArray = Files.readAllBytes(src.toPath());
+        PdfDocument srcDoc = new PdfDocument(
+           new PdfReader(new RandomAccessSourceFactory().createSource(byteArray),
+           new ReaderProperties()));
+        PdfDocument resultDoc = new PdfDocument(new PdfWriter(dest));
+        resultDoc.initializeOutlines();
+ 
+        List<Integer> pages = new ArrayList<>();
+        int numPages = srcDoc.getNumberOfPages();
+        LOGGER.info( "NumPages=" + numPages );
+        for ( int pagei = numPages; pagei > 0; pagei-- ) {
+            pages.add( pagei );
+        }
+        LOGGER.info( "Pages=" + pages );
+        srcDoc.copyPagesTo(pages, resultDoc);
+ 
+        resultDoc.close();
+        srcDoc.close();
+    }
+    
+    public void concatenatePdf(String src1, String src2, String dest) throws IOException {
         PdfDocument pdfDest= new PdfDocument(new PdfWriter(dest));
         PdfDocument pdfSrc1 = new PdfDocument(new PdfReader(src1));
         PdfDocument pdfSrc2 = new PdfDocument(new PdfReader(src2));
@@ -196,5 +253,4 @@ public class PdfCL {
         pdfSrc1.close();
         pdfSrc2.close();
     }
-    
 }
