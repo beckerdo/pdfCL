@@ -17,17 +17,23 @@ import org.apache.commons.cli.ParseException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import com.itextpdf.io.image.ImageDataFactory;
 import com.itextpdf.io.source.RandomAccessSourceFactory;
+import com.itextpdf.kernel.colors.DeviceGray;
+import com.itextpdf.kernel.geom.Rectangle;
 import com.itextpdf.kernel.pdf.PdfDocument;
 import com.itextpdf.kernel.pdf.PdfReader;
 import com.itextpdf.kernel.pdf.PdfWriter;
 import com.itextpdf.kernel.pdf.ReaderProperties;
+import com.itextpdf.kernel.pdf.xobject.PdfFormXObject;
 import com.itextpdf.kernel.utils.PdfMerger;
-
+import com.itextpdf.layout.Canvas;
 import com.itextpdf.layout.Document;
 import com.itextpdf.layout.element.AreaBreak;
+import com.itextpdf.layout.element.Image;
 import com.itextpdf.layout.element.Paragraph;
 import com.itextpdf.layout.property.AreaBreakType;
+import com.itextpdf.layout.property.TextAlignment;
 
 /**
  * A command line tool for editing PDF (Postscript Document Format) files
@@ -71,8 +77,12 @@ public class PdfCL {
                 new PdfCL().appendPdf(srcs, dest, list);
                 break;
             }
-            case "reverse": {
-                new PdfCL().reversePdf(srcs);
+            case "splitImages": {
+                new PdfCL().splitImages(srcs, dest, list);
+                break;
+            }
+            case "joinImages": {
+                new PdfCL().joinImages(srcs, dest);
                 break;
             }
             default: {
@@ -231,7 +241,11 @@ public class PdfCL {
             int numPages = srcDoc.getNumberOfPages();
             LOGGER.info("NumPages=" + numPages);
             LOGGER.info("Pages=" + pagesToMerge);
-            srcDoc.copyPagesTo(pagesToMerge, resultDoc);
+            if ( null != pagesToMerge ) {
+               srcDoc.copyPagesTo(pagesToMerge, resultDoc);
+            } else {
+               srcDoc.copyPagesTo(1, srcDoc.getNumberOfPages(), resultDoc);                
+            }
             srcDoc.close();
         } // srcs
 
@@ -281,5 +295,79 @@ public class PdfCL {
         }
 
         pdfDest.close();
+    }
+    
+    /** 
+     * Splits images in a given set of files/pages to output path.
+     * @param srcs
+     * @param dest
+     * @param pagesToMerge
+     * @throws IOException
+     */
+    public void splitImages(String[] srcs, String dest, List<Integer> pagesToMerge) throws IOException {
+        // Check and optionally copy or create destination file
+        PdfDocument resultDoc = null;
+        mkdirs(dest);
+        File destFile = new File(dest);
+        if (destFile.exists() && destFile.length() > 0) {
+            LOGGER.info("File \"" + destFile + "\" exists=" + destFile.exists() + ", canRead=" + destFile.canRead() + ", length="
+                    + destFile.length());
+            byte[] byteArray = Files.readAllBytes(destFile.toPath());
+            PdfDocument originalDoc = new PdfDocument(
+               new PdfReader(new RandomAccessSourceFactory().createSource(byteArray), new ReaderProperties()));
+            resultDoc = new PdfDocument(new PdfWriter(dest));
+            LOGGER.info("Original numPages=" + originalDoc.getNumberOfPages());
+            originalDoc.copyPagesTo( 1, originalDoc.getNumberOfPages(), resultDoc );
+            originalDoc.close(); 
+        } else {
+            resultDoc = new PdfDocument(new PdfWriter(dest));
+        }
+        // resultDoc.initializeOutlines();
+
+        // Copy 
+        for (String src : srcs) {
+            LOGGER.info("Source file=" + src);
+            PdfDocument srcDoc = new PdfDocument(new PdfReader(src));
+            int numPages = srcDoc.getNumberOfPages();
+            LOGGER.info("NumPages=" + numPages);
+            LOGGER.info("Pages=" + pagesToMerge);
+            if ( null != pagesToMerge ) {
+                srcDoc.copyPagesTo(pagesToMerge, resultDoc);
+             } else {
+                srcDoc.copyPagesTo(1, srcDoc.getNumberOfPages(), resultDoc);                
+             }
+           srcDoc.close();
+        } // srcs
+
+        resultDoc.close();        
+    }
+
+    public Image getWatermarkedImage(PdfDocument pdfDoc, Image img, String watermark) {
+        float width = img.getImageScaledWidth();
+        float height = img.getImageScaledHeight();
+        PdfFormXObject template = new PdfFormXObject(new Rectangle(width, height));
+        Canvas canvas = new Canvas(template, pdfDoc);        
+        canvas.add(img).
+                setFontColor(DeviceGray.WHITE).
+                showTextAligned(watermark, width / 2, height / 2, TextAlignment.CENTER, (float) Math.PI / 6);
+        canvas.close();
+        return new Image(template);
+    }
+ 
+//    public static final String IMAGE1 = "resources/img/bruno.jpg";
+//    public static final String IMAGE2 = "resources/img/dog.bmp";
+//    public static final String IMAGE3 = "resources/img/fox.bmp";
+//    public static final String IMAGE4 = "resources/img/bruno_ingeborg.jpg";
+    
+    protected void joinImages(String[] srcs, String dest ) throws Exception {
+        PdfDocument pdfDoc = new PdfDocument(new PdfWriter(dest));
+        Document doc = new Document(pdfDoc);
+        Image image = new Image(ImageDataFactory.create(srcs[0])).scaleToFit(200, 350);
+        doc.add(getWatermarkedImage(pdfDoc, image, "Bruno"));
+        doc.add(getWatermarkedImage(pdfDoc, new Image(ImageDataFactory.create(srcs[1])), "Dog"));
+        doc.add(getWatermarkedImage(pdfDoc, new Image(ImageDataFactory.create(srcs[2])), "Fox"));
+        image = new Image(ImageDataFactory.create(srcs[3])).scaleToFit(200, 350);
+        doc.add(getWatermarkedImage(pdfDoc, image, "Bruno and Ingeborg"));
+        doc.close();
     }
 }
