@@ -29,6 +29,13 @@ import com.itextpdf.layout.element.AreaBreak;
 import com.itextpdf.layout.element.Paragraph;
 import com.itextpdf.layout.property.AreaBreakType;
 
+/**
+ * A command line tool for editing PDF (Postscript Document Format) files
+ * 
+ * This tool allows you to create, append, split/merge, delete pages in a PDF file.
+ * 
+ * @author <a href="mailto://dan@danbecker.info">Dan Becker</a>
+ */
 public class PdfCL {
     /** LOGGER */
     public static final Logger LOGGER = LoggerFactory.getLogger(PdfCL.class);
@@ -36,10 +43,10 @@ public class PdfCL {
     public static final String[] SRC = { "resources/input.pdf" };
     public static final String DEST = "resources/output.pdf";
 
-    public static final String CMD_DELIM = "\"\\\\s*,\\\\s*\""; // 0* whitespace, comma, 0* whtitespace
+    public static final String CMD_DELIM = "\\s*,\\s*"; // 0* whitespace, comma, 0* whtitespace
 
     protected static String verb;
-    protected static String[] src;
+    protected static String[] srcs;
     protected static String dest;
     protected static int number;
     protected static List<Integer> list;
@@ -56,12 +63,16 @@ public class PdfCL {
                 new PdfCL().createPdf(dest, number);
                 break;
             }
+            case "concatenate": {
+                new PdfCL().concatenatePdf(srcs, dest );
+                break;
+            }
             case "append": {
-                new PdfCL().appendPdf(src, dest, list);
+                new PdfCL().appendPdf(srcs, dest, list);
                 break;
             }
             case "reverse": {
-                new PdfCL().reversePdf(src);
+                new PdfCL().reversePdf(srcs);
                 break;
             }
             default: {
@@ -102,10 +113,10 @@ public class PdfCL {
         }
         if (line.hasOption("src")) {
             String option = line.getOptionValue("src");
-            src = option.split(CMD_DELIM);
-            LOGGER.info("src=" + src);
+            srcs = option.split(CMD_DELIM);
+            LOGGER.info("srcs=" + Arrays.toString( srcs ));
         } else {
-            src = SRC;
+            srcs = SRC;
         }
         if (line.hasOption("dest")) {
             dest = line.getOptionValue("dest");
@@ -227,19 +238,20 @@ public class PdfCL {
     // pdfDest.close();
     // }
 
+    /** Reverse all pages in the given source files. */
     protected void reversePdf(String[] srcs) throws Exception {
         for (String src : srcs) {
+            LOGGER.info("Source file=" + src);
             File srcFile = new File(src);
             if (fileReadable(dest)) {
                 LOGGER.info("File \"" + srcFile + "\" exists=" + srcFile.exists() + ", canRead=" + srcFile.canRead() + ", length="
                         + srcFile.length());
                 return;
             }
-            LOGGER.info("Source file=" + src);
             byte[] byteArray = Files.readAllBytes(srcFile.toPath());
             PdfDocument srcDoc = new PdfDocument(
                     new PdfReader(new RandomAccessSourceFactory().createSource(byteArray), new ReaderProperties()));
-            PdfDocument resultDoc = new PdfDocument(new PdfWriter(dest));
+            PdfDocument resultDoc = new PdfDocument(new PdfWriter(src));
             resultDoc.initializeOutlines();
 
             List<Integer> pages = new ArrayList<>();
@@ -251,11 +263,12 @@ public class PdfCL {
             LOGGER.info("Pages=" + pages);
             srcDoc.copyPagesTo(pages, resultDoc);
 
-            resultDoc.close();
             srcDoc.close();
-        }
+            resultDoc.close();
+        } // srcs
     }
 
+    /** Copies all input file pages to a given output file page. */
     public void concatenatePdf(String[] srcs, String dest) throws IOException {
         PdfDocument pdfDest = new PdfDocument(new PdfWriter(dest));
 
