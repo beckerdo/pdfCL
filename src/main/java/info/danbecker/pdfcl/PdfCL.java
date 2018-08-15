@@ -158,7 +158,7 @@ public class PdfCL {
     }
 
     /**
-     * Creates a dummy PDF
+     * Creates a dummy PDF with a number of text pages.
      * 
      * @param dest
      *            output file name
@@ -196,47 +196,47 @@ public class PdfCL {
         LOGGER.info("\"" + dest + "\" created");
     }
 
+    /** 
+     * Appends a list of pages from a list of input files to an output file.
+     * Contents in the output file are preserved.
+     * @param srcs
+     * @param dest
+     * @param pagesToMerge
+     * @throws IOException
+     */
     public void appendPdf(String[] srcs, String dest, List<Integer> pagesToMerge) throws IOException {
+        // Check and optionally copy or create destination file
+        PdfDocument resultDoc = null;
         mkdirs(dest);
-        PdfDocument pdfDest = new PdfDocument(new PdfWriter(dest));
-
-        for (String src : srcs) {
-            PdfDocument pdfSrc = new PdfDocument(new PdfReader(src));
-            pdfSrc.copyPagesTo(pagesToMerge, pdfDest);
-            pdfSrc.close();
+        File destFile = new File(dest);
+        if (destFile.exists() && destFile.length() > 0) {
+            LOGGER.info("File \"" + destFile + "\" exists=" + destFile.exists() + ", canRead=" + destFile.canRead() + ", length="
+                    + destFile.length());
+            byte[] byteArray = Files.readAllBytes(destFile.toPath());
+            PdfDocument originalDoc = new PdfDocument(
+               new PdfReader(new RandomAccessSourceFactory().createSource(byteArray), new ReaderProperties()));
+            resultDoc = new PdfDocument(new PdfWriter(dest));
+            LOGGER.info("Original numPages=" + originalDoc.getNumberOfPages());
+            originalDoc.copyPagesTo( 1, originalDoc.getNumberOfPages(), resultDoc );
+            originalDoc.close(); 
+        } else {
+            resultDoc = new PdfDocument(new PdfWriter(dest));
         }
+        // resultDoc.initializeOutlines();
 
-        pdfDest.close();
+        // Copy 
+        for (String src : srcs) {
+            LOGGER.info("Source file=" + src);
+            PdfDocument srcDoc = new PdfDocument(new PdfReader(src));
+            int numPages = srcDoc.getNumberOfPages();
+            LOGGER.info("NumPages=" + numPages);
+            LOGGER.info("Pages=" + pagesToMerge);
+            srcDoc.copyPagesTo(pagesToMerge, resultDoc);
+            srcDoc.close();
+        } // srcs
+
+        resultDoc.close();        
     }
-
-    // public void appendPdf(String src, String dest, List<Integer> pagesToMerge)
-    // throws IOException {
-    // File file = new File(dest);
-    // file.getParentFile().mkdirs();
-    //
-    //
-    // PdfDocument pdfOriginalPages = null;
-    // if (file.exists() && file.length() > 0) {
-    // pdfOriginalPages = new PdfDocument(new PdfReader(dest));
-    // }
-    // PdfDocument pdfDest = new PdfDocument(new PdfWriter(dest));
-    // // PdfDocument pdfDest = new PdfDocument(new PdfReader(dest), new
-    // PdfWriter(dest));
-    // PdfDocument pdfSrc = new PdfDocument(new PdfReader(src));
-    //
-    // PdfMerger merger = new PdfMerger(pdfDest); // cannot append to existing doc
-    // if (file.exists() && file.length() > 0) {
-    // merger.merge(pdfDest, 1, pdfOriginalPages.getNumberOfPages());
-    // }
-    // merger.merge(pdfSrc, pagesToMerge);
-    // // pdfSrc.copyPagesTo( pagesToMerge, pdfDest);
-    //
-    // if (file.exists() && file.length() > 0) {
-    // pdfOriginalPages.close();
-    // }
-    // pdfSrc.close();
-    // pdfDest.close();
-    // }
 
     /** Reverse all pages in the given source files. */
     protected void reversePdf(String[] srcs) throws Exception {
