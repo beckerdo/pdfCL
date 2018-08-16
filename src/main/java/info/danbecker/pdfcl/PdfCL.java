@@ -1,12 +1,18 @@
 package info.danbecker.pdfcl;
 
+import java.awt.image.BufferedImage;
 import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.LinkedList;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
+
+import javax.imageio.ImageIO;
 
 import org.apache.commons.cli.CommandLine;
 import org.apache.commons.cli.CommandLineParser;
@@ -22,10 +28,16 @@ import com.itextpdf.io.source.RandomAccessSourceFactory;
 import com.itextpdf.kernel.colors.DeviceGray;
 import com.itextpdf.kernel.geom.Rectangle;
 import com.itextpdf.kernel.pdf.PdfDocument;
+import com.itextpdf.kernel.pdf.PdfName;
+import com.itextpdf.kernel.pdf.PdfObject;
+import com.itextpdf.kernel.pdf.PdfPage;
 import com.itextpdf.kernel.pdf.PdfReader;
+import com.itextpdf.kernel.pdf.PdfResources;
+import com.itextpdf.kernel.pdf.PdfStream;
 import com.itextpdf.kernel.pdf.PdfWriter;
 import com.itextpdf.kernel.pdf.ReaderProperties;
 import com.itextpdf.kernel.pdf.xobject.PdfFormXObject;
+import com.itextpdf.kernel.pdf.xobject.PdfImageXObject;
 import com.itextpdf.kernel.utils.PdfMerger;
 import com.itextpdf.layout.Canvas;
 import com.itextpdf.layout.Document;
@@ -56,12 +68,22 @@ public class PdfCL {
     protected static String dest;
     protected static int number;
     protected static List<Integer> list;
+    
+    public static Map<Byte,String> nameMap = new HashMap<>();
 
+
+    public static void initMap( Map<Byte,String> nameMap ) {
+       nameMap.put( PdfName.Image.getType(), "image" );
+       nameMap.put( PdfName.Obj.getType(), "obj" );
+       nameMap.put( PdfName.Stream.getType(), "stream" );
+    }
+    
     // Constructors
     // Runtime
     public static void main(String[] args) throws Exception {
         // Parse command line options
         parseOptions(args);
+        initMap( nameMap );
 
         if (null != verb && verb.length() > 0) {
             switch (verb) {
@@ -305,43 +327,75 @@ public class PdfCL {
      * @throws IOException
      */
     public void splitImages(String[] srcs, String dest, List<Integer> pagesToMerge) throws IOException {
-        // Check and optionally copy or create destination file
-        PdfDocument resultDoc = null;
-        mkdirs(dest);
-        File destFile = new File(dest);
-        if (destFile.exists() && destFile.length() > 0) {
-            LOGGER.info("File \"" + destFile + "\" exists=" + destFile.exists() + ", canRead=" + destFile.canRead() + ", length="
-                    + destFile.length());
-            byte[] byteArray = Files.readAllBytes(destFile.toPath());
-            PdfDocument originalDoc = new PdfDocument(
-               new PdfReader(new RandomAccessSourceFactory().createSource(byteArray), new ReaderProperties()));
-            resultDoc = new PdfDocument(new PdfWriter(dest));
-            LOGGER.info("Original numPages=" + originalDoc.getNumberOfPages());
-            originalDoc.copyPagesTo( 1, originalDoc.getNumberOfPages(), resultDoc );
-            originalDoc.close(); 
-        } else {
-            resultDoc = new PdfDocument(new PdfWriter(dest));
-        }
-        // resultDoc.initializeOutlines();
+        // Treat dest as a path and make dirs
+        new File(dest).mkdirs();
 
         // Copy 
         for (String src : srcs) {
-            LOGGER.info("Source file=" + src);
             PdfDocument srcDoc = new PdfDocument(new PdfReader(src));
-            int numPages = srcDoc.getNumberOfPages();
-            LOGGER.info("NumPages=" + numPages);
-            LOGGER.info("Pages=" + pagesToMerge);
-            if ( null != pagesToMerge ) {
-                srcDoc.copyPagesTo(pagesToMerge, resultDoc);
-             } else {
-                srcDoc.copyPagesTo(1, srcDoc.getNumberOfPages(), resultDoc);                
-             }
+            LOGGER.info("Source file=" + src + ", numPages=" + srcDoc.getNumberOfPages() + ", numObjects=" + srcDoc.getNumberOfPdfObjects());
+           
+           List<Integer> streamLengths = new ArrayList<>();
+           for (int i = 1; i <= srcDoc.getNumberOfPdfObjects(); i++) {
+               PdfObject obj = srcDoc.getPdfObject(i);
+               if (obj != null && obj.isStream()) {                   
+                   PdfStream stream = (PdfStream) obj;
+                   // byte[] b = stream.getBytes();
+                   
+                   PdfName pdfName = stream.getAsName(PdfName.Subtype);
+                   if (PdfName.Image.equals( pdfName )) {                       
+                       PdfImageXObject image = new PdfImageXObject(stream);
+                       BufferedImage bi = image.getBufferedImage();                       
+                       LOGGER.info("Object " + i + ", subtype=image, size=" + bi.getWidth() + "x" + bi.getHeight() + ",type=" + bi.getType());
+                       
+                       if ( !dest.endsWith( File.separator )) {
+                           dest += File.separator;
+                       }                       
+                       File outputfile = new File(dest + "obj-" + i +".jpg"); 
+                       ImageIO.write(bi, "jpg", outputfile);
+
+
+                   } else {
+                       if ( null == pdfName ) {
+                           // LOGGER.info("Object " + i + ", subtype=null");
+                       } else {
+                           LOGGER.info("Object " + i + ", subtype=" + pdfName.getValue());                       
+                       }
+                   }
+             } // if Stream
+           }
+          
+           // Access via page number
+           for (int i = 1; i <= srcDoc.getNumberOfPages(); i++) {
+              PdfPage page = srcDoc.getPage(i);
+              PdfResources resources = page.getResources();
+                                
+              Set<PdfName> names = resources.getResourceNames();
+              for ( PdfName name : names) {
+                  LOGGER.info( "Page " + i + ", resource name=" + name.toString() + ", type="  + name.getType() + ", typeName=" + getNameString( name ));                    
+                  if ( PdfName.Stream.getType() == name.getType() ) {
+                      // LOGGER.info( "stream subtype=" + resources.get() );
+                      PdfStream stream = (PdfStream) resources.getResourceObject(PdfName.Stream, name);                      
+                      // PdfName subType = stream.getAsName(PdfName.Subtype);
+                      // LOGGER.info( "Page " + i + ", resource name=" + name.toString() + ", subtype=" + subType );                    
+                  }
+              }
+           }
+           
            srcDoc.close();
         } // srcs
-
-        resultDoc.close();        
     }
 
+    
+    public static String getNameString( PdfName pdfName ) {
+        String name = nameMap.get( pdfName.getType() );
+        
+        if ( null == name || name.length() < 1 ) {
+            return "unknown";
+        }
+        return name;        
+    }
+    
     public Image getWatermarkedImage(PdfDocument pdfDoc, Image img, String watermark) {
         float width = img.getImageScaledWidth();
         float height = img.getImageScaledHeight();
