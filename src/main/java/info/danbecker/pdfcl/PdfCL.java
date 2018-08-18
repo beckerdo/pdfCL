@@ -4,6 +4,8 @@ import java.awt.image.BufferedImage;
 import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
@@ -60,13 +62,12 @@ public class PdfCL {
 
     public static final String[] SRC = { "resources/input.pdf" };
     public static final String DEST = "resources/output.pdf";
-
-    public static final String CMD_DELIM = "\\s*,\\s*"; // 0* whitespace, comma, 0* whtitespace
+    public static final String CMD_DELIM = "\\s*,\\s*"; // 0* whitespace, comma, 0* whitespace
 
     protected static String verb;
     protected static String[] srcs;
     protected static String dest;
-    protected static int number;
+    protected static String number;
     protected static List<Integer> list;
     
     public static Map<Byte,String> nameMap = new HashMap<>();
@@ -88,7 +89,7 @@ public class PdfCL {
         if (null != verb && verb.length() > 0) {
             switch (verb) {
             case "create": {
-                new PdfCL().createPdf(dest, number);
+                new PdfCL().createPdf(dest, Integer.parseInt(number));
                 break;
             }
             case "concatenate": {
@@ -105,6 +106,10 @@ public class PdfCL {
             }
             case "joinImages": {
                 new PdfCL().joinImages(srcs, dest);
+                break;
+            }
+            case "autoCrop": {
+                new PdfCL().autoCrop(srcs, dest, number);
                 break;
             }
             default: {
@@ -157,10 +162,8 @@ public class PdfCL {
         }
         LOGGER.info("dest=" + dest);
         if (line.hasOption("number")) {
-            number = Integer.parseInt(line.getOptionValue("number"));
+            number = line.getOptionValue("number");
             LOGGER.info("number=" + number);
-        } else {
-            number = 0;
         }
         if (line.hasOption("list")) {
             String stringList = line.getOptionValue("list");
@@ -335,7 +338,6 @@ public class PdfCL {
             PdfDocument srcDoc = new PdfDocument(new PdfReader(src));
             LOGGER.info("Source file=" + src + ", numPages=" + srcDoc.getNumberOfPages() + ", numObjects=" + srcDoc.getNumberOfPdfObjects());
            
-           List<Integer> streamLengths = new ArrayList<>();
            for (int i = 1; i <= srcDoc.getNumberOfPdfObjects(); i++) {
                PdfObject obj = srcDoc.getPdfObject(i);
                if (obj != null && obj.isStream()) {                   
@@ -385,7 +387,6 @@ public class PdfCL {
            srcDoc.close();
         } // srcs
     }
-
     
     public static String getNameString( PdfName pdfName ) {
         String name = nameMap.get( pdfName.getType() );
@@ -423,5 +424,135 @@ public class PdfCL {
         image = new Image(ImageDataFactory.create(srcs[3])).scaleToFit(200, 350);
         doc.add(getWatermarkedImage(pdfDoc, image, "Bruno and Ingeborg"));
         doc.close();
+    }
+    
+    /** 
+     * Takes source files or directory of source files, breaks them into individuals, passes them on.
+     * @param srcs
+     * @param dest
+     * @throws IOException
+     */
+    public void autoCrop(String[] srcs, String dest, String number ) throws IOException {
+        // Treat dest as a path and make dirs
+        File destFile = new File(dest);
+        destFile.mkdirs();
+        
+        Float tolerance = Float.parseFloat(number);
+
+        // Copy 
+        for (String src : srcs) {
+            File srcFile = new File ( src );
+            if ( srcFile.canRead() ) {
+                if ( srcFile.isDirectory() ) {
+                    ArrayList<File> srcFiles = new ArrayList<File>(Arrays.asList(srcFile.listFiles()));
+                    for ( File oneFile : srcFiles ) {
+                        autoCrop( oneFile, destFile, tolerance );                        
+                    }
+                } else {
+                    autoCrop( srcFile, destFile, tolerance );
+                }                
+            } else {
+                LOGGER.info("File \"" + srcFile + "\" exists=" + srcFile.exists() + ", canRead=" + srcFile.canRead() + ", length="
+                        + srcFile.length());
+            }
+        } // srcs
+    }
+
+    /** 
+     * Takes one source files, auto crops, and places in dest file.
+     * @param srcs
+     * @param dest
+     * @throws IOException
+     */
+    public void autoCrop(File srcFile, File destFile, Float tolerance ) throws IOException {
+        if (srcFile.exists() && srcFile.isFile() && srcFile.canRead()) {
+            BufferedImage in = ImageIO.read(srcFile);
+            LOGGER.info("Input image size=" + in.getWidth() + "x" + in.getHeight() + ", type=" + in.getType());
+
+            Path outputPath = null;
+            if ( destFile.isDirectory() ) {
+                outputPath = Paths.get(destFile.toString(), srcFile.getName());
+            } else {
+                outputPath = Paths.get(destFile.toString(), srcFile.getName());
+            }
+                           
+            BufferedImage out = getCroppedImage( in, tolerance );
+            LOGGER.info("Output image size=" + out.getWidth() + "x" + out.getHeight() + ", type=" + out.getType());
+
+            ImageIO.write(out, "jpg", outputPath.toFile());
+        } else {
+            LOGGER.info("File \"" + srcFile + "\" exists=" + srcFile.exists() + ", canRead=" + srcFile.canRead()
+                    + ", length=" + srcFile.length());
+        }            
+    }
+
+    /**
+     * Crop all 4 sides of an images, removing border color pixels. 
+     * Originally from <a href="https://stackoverflow.com/questions/10678015/how-to-auto-crop-an-image-white-border-in-java">Stackoverflow</a>.
+     * Modified to vote on which corner pixel to use as the base color.
+     * @param source
+     * @param tolerance
+     * @return
+     */
+    public static BufferedImage getCroppedImage(BufferedImage source, double tolerance) {
+        // Get our top-left pixel color as our "baseline" for cropping
+        // TODO Get all four corners and the baseColor is the most common corner color.
+        int baseColor = source.getRGB(0, 0);
+
+        int width = source.getWidth();
+        int height = source.getHeight();
+
+        int topY = Integer.MAX_VALUE, topX = Integer.MAX_VALUE;
+        int bottomY = -1, bottomX = -1;
+        for (int y = 0; y < height; y++) {
+            for (int x = 0; x < width; x++) {
+                if (colorWithinTolerance(baseColor, source.getRGB(x, y), tolerance)) {
+                    if (x < topX)
+                        topX = x;
+                    if (y < topY)
+                        topY = y;
+                    if (x > bottomX)
+                        bottomX = x;
+                    if (y > bottomY)
+                        bottomY = y;
+                }
+            }
+        }
+
+        BufferedImage destination = new BufferedImage((bottomX - topX + 1), (bottomY - topY + 1),
+                BufferedImage.TYPE_INT_ARGB);
+
+        destination.getGraphics().drawImage(source, 0, 0, destination.getWidth(), destination.getHeight(),
+             topX, topY, bottomX+1, bottomY+1, null);
+
+        return destination;
+    }
+
+    /**
+     * Return true or false if a given int-encoded ARGB pixel is within a certain percentage distance of another.
+     * @param a
+     * @param b
+     * @param tolerance
+     * @return
+     */
+    private static boolean colorWithinTolerance(int a, int b, double tolerance) {
+        int aAlpha = (int) ((a & 0xFF000000) >>> 24); // Alpha level
+        int aRed = (int) ((a & 0x00FF0000) >>> 16); // Red level
+        int aGreen = (int) ((a & 0x0000FF00) >>> 8); // Green level
+        int aBlue = (int) (a & 0x000000FF); // Blue level
+
+        int bAlpha = (int) ((b & 0xFF000000) >>> 24); // Alpha level
+        int bRed = (int) ((b & 0x00FF0000) >>> 16); // Red level
+        int bGreen = (int) ((b & 0x0000FF00) >>> 8); // Green level
+        int bBlue = (int) (b & 0x000000FF); // Blue level
+
+        double distance = Math.sqrt((aAlpha - bAlpha) * (aAlpha - bAlpha) + (aRed - bRed) * (aRed - bRed)
+                + (aGreen - bGreen) * (aGreen - bGreen) + (aBlue - bBlue) * (aBlue - bBlue));
+
+        // 510.0 is the maximum distance between two colors
+        // (0,0,0,0 -> 255,255,255,255)
+        double percentAway = distance / 510.0d;
+
+        return (percentAway > tolerance);
     }
 }
