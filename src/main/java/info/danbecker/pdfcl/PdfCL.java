@@ -69,6 +69,7 @@ public class PdfCL {
     protected static String dest;
     protected static String number;
     protected static List<Integer> list;
+    protected static String color;
     
     public static Map<Byte,String> nameMap = new HashMap<>();
 
@@ -109,7 +110,7 @@ public class PdfCL {
                 break;
             }
             case "autoCrop": {
-                new PdfCL().autoCrop(srcs, dest, number);
+                new PdfCL().autoCrop(srcs, dest, color, number);
                 break;
             }
             default: {
@@ -127,10 +128,11 @@ public class PdfCL {
         // Use dash with shortcut (-h) or -- with name (--help).
         options.addOption("h", "help", false, "print the command line options");
         options.addOption("v", "verb", true, "action to perform");
-        options.addOption("n", "number", true, "number, such as number of pages");
+        options.addOption("n", "number", true, "number, such as number of pages or percentage");
         options.addOption("l", "list", true, "list of comma-separated, such as pages, names, etc.");
         options.addOption("s", "src", true, "list of comma-separated input PDF files");
         options.addOption("d", "dest", true, "output PDF file");
+        options.addOption("c", "color", true, "comma separated ARGB used for image processing");
 
         final CommandLineParser cliParser = new DefaultParser();
         final CommandLine line = cliParser.parse(options, args);
@@ -175,6 +177,10 @@ public class PdfCL {
             LOGGER.info("list=" + list);
         } else {
             list = Arrays.asList();
+        }
+        if (line.hasOption("color")) {
+            color = line.getOptionValue("color");
+            LOGGER.info("color=" + color);
         }
     }
 
@@ -430,14 +436,19 @@ public class PdfCL {
      * Takes source files or directory of source files, breaks them into individuals, passes them on.
      * @param srcs
      * @param dest
+     * @param number is tolerance expressed as a float percentage, for example 0.05
      * @throws IOException
      */
-    public void autoCrop(String[] srcs, String dest, String number ) throws IOException {
+    public void autoCrop(String[] srcs, String dest, String baseColorARGB, String number ) throws IOException {
         // Treat dest as a path and make dirs
         File destFile = new File(dest);
         destFile.mkdirs();
         
-        Float tolerance = Float.parseFloat(number);
+        // Tolerance option specified as a percentage 0..1
+        Float tolerance = 0.10f;
+        if ( number != null ) {
+            tolerance = Float.parseFloat(number);
+        }
 
         // Copy 
         for (String src : srcs) {
@@ -446,10 +457,10 @@ public class PdfCL {
                 if ( srcFile.isDirectory() ) {
                     ArrayList<File> srcFiles = new ArrayList<File>(Arrays.asList(srcFile.listFiles()));
                     for ( File oneFile : srcFiles ) {
-                        autoCrop( oneFile, destFile, tolerance );                        
+                        autoCrop( oneFile, destFile, baseColorARGB, tolerance );                        
                     }
                 } else {
-                    autoCrop( srcFile, destFile, tolerance );
+                    autoCrop( srcFile, destFile, baseColorARGB, tolerance );
                 }                
             } else {
                 LOGGER.info("File \"" + srcFile + "\" exists=" + srcFile.exists() + ", canRead=" + srcFile.canRead() + ", length="
@@ -464,22 +475,41 @@ public class PdfCL {
      * @param dest
      * @throws IOException
      */
-    public void autoCrop(File srcFile, File destFile, Float tolerance ) throws IOException {
+    public void autoCrop(File srcFile, File destFile, String baseColorString, float tolerance ) throws IOException {
         if (srcFile.exists() && srcFile.isFile() && srcFile.canRead()) {
             BufferedImage in = ImageIO.read(srcFile);
-            LOGGER.info("Input image size=" + in.getWidth() + "x" + in.getHeight() + ", type=" + in.getType());
+            LOGGER.info("Input image \"" + srcFile.getName() + "\" size=" + in.getWidth() + "x" + in.getHeight() + ", type=" + in.getType());
 
             Path outputPath = null;
             if ( destFile.isDirectory() ) {
-                outputPath = Paths.get(destFile.toString(), srcFile.getName());
+                // Put string in between file name and extension.
+                String srcName = srcFile.getName();
+                String [] srcNameParts = srcName.split( "\\.");
+                outputPath = Paths.get(destFile.toString(), srcNameParts[ 0 ] + "-c." + srcNameParts[1]  );
             } else {
-                outputPath = Paths.get(destFile.toString(), srcFile.getName());
+                outputPath = Paths.get(destFile.toString());
             }
-                           
-            BufferedImage out = getCroppedImage( in, tolerance );
-            LOGGER.info("Output image size=" + out.getWidth() + "x" + out.getHeight() + ", type=" + out.getType());
 
-            ImageIO.write(out, "jpg", outputPath.toFile());
+            int baseColor = -2;
+            if ( null != baseColorString ) {
+                String [] components = baseColorString.split("\\,");
+                if ( components.length == 3 ) {
+                    baseColor = argbInt(null, components[0], components[1], components[2]);                    
+                } else if (components.length == 4){
+                    baseColor = argbInt(components[0], components[1], components[2], components[3]);                    
+                } else {
+                    throw new IllegalArgumentException( "base color \"" + baseColorString + "\" is illegal");
+                }
+            }
+            
+            BufferedImage out = getCroppedImage( in, baseColor, tolerance );
+            
+            if ( null != out ) {
+                LOGGER.info("Output image \"" + outputPath.toFile().getName() + "\" size=" + out.getWidth() + "x" + out.getHeight() + ", type=" + out.getType());
+                ImageIO.write(out, "jpg", outputPath.toFile());
+            } else {
+                LOGGER.info( "Input image \"" + srcFile.getName() + "\" no adjustments" );                
+            }
         } else {
             LOGGER.info("File \"" + srcFile + "\" exists=" + srcFile.exists() + ", canRead=" + srcFile.canRead()
                     + ", length=" + srcFile.length());
@@ -492,50 +522,104 @@ public class PdfCL {
      * Modified to vote on which corner pixel to use as the base color.
      * @param source
      * @param tolerance
-     * @return
+     * @return a cropped BufferedImage or null for no changes
      */
-    public static BufferedImage getCroppedImage(BufferedImage source, double tolerance) {
-        // Get our top-left pixel color as our "baseline" for cropping
-        // TODO Get all four corners and the baseColor is the most common corner color.
-        int baseColor = source.getRGB(0, 0);
-
+    public static BufferedImage getCroppedImage(BufferedImage source, int baseColor, double tolerance) {
         int width = source.getWidth();
         int height = source.getHeight();
 
+        if ( -2 == baseColor ) {
+            baseColor = calculateBaseColor( source );
+        }
+        
         int topY = Integer.MAX_VALUE, topX = Integer.MAX_VALUE;
         int bottomY = -1, bottomX = -1;
+        int topXAdjustCount = 0;
+        int bottomXAdjustCount = 0;
+        int topYAdjustCount = 0;
+        int bottomYAdjustCount = 0;
         for (int y = 0; y < height; y++) {
             for (int x = 0; x < width; x++) {
-                if (colorWithinTolerance(baseColor, source.getRGB(x, y), tolerance)) {
-                    if (x < topX)
+                if (colorWithinTolerance(baseColor, source.getRGB( x, y ), tolerance)) {
+                    if (x < topX) {
                         topX = x;
-                    if (y < topY)
+                        topXAdjustCount++;
+                    }
+                    if (y < topY) {
                         topY = y;
-                    if (x > bottomX)
+                        topYAdjustCount++;
+                    }
+                    if (x > bottomX) {
                         bottomX = x;
-                    if (y > bottomY)
+                        bottomXAdjustCount++;
+                    }
+                    if (y > bottomY) {
                         bottomY = y;
+                        bottomYAdjustCount++;
+                    }
                 }
             }
         }
-
+        LOGGER.info( "Edge adjustments: topX=" + topXAdjustCount + ", topY=" + topXAdjustCount + ", bottomX=" + bottomXAdjustCount + ", bottomY=" + bottomXAdjustCount);
+        if ( 0 == topXAdjustCount && 0 == topYAdjustCount && 0 == bottomXAdjustCount && 0 == bottomYAdjustCount) {
+            return null;
+        }
         BufferedImage destination = new BufferedImage((bottomX - topX + 1), (bottomY - topY + 1),
-                BufferedImage.TYPE_INT_ARGB);
-
+                source.getType());
         destination.getGraphics().drawImage(source, 0, 0, destination.getWidth(), destination.getHeight(),
              topX, topY, bottomX+1, bottomY+1, null);
 
         return destination;
     }
+    
+    public static int calculateBaseColor( BufferedImage source ) {
+        int width = source.getWidth();
+        int height = source.getHeight();
+        // Get our top-left pixel color as our "baseline" for cropping
+        // Get all four corners and the baseColor is the "lowest distance" corner color.
+        int topLeftColor = source.getRGB(0, 0);
+        int topRightColor = source.getRGB(width-1, 0);
+        int bottomLeftColor = source.getRGB(0,height-1);
+        int bottomRightColor = source.getRGB(width-1, height-1);
 
-    /**
-     * Return true or false if a given int-encoded ARGB pixel is within a certain percentage distance of another.
+        LOGGER.debug("Top left/right " + colorString( topLeftColor ) + "=>" + colorString( topRightColor ) + "=" + colorDistance( topLeftColor,topRightColor) );  
+        LOGGER.debug("Left top/bottom " + colorString( topLeftColor ) + "=>" + colorString( bottomLeftColor ) + "=" + colorDistance( topLeftColor,bottomLeftColor) );  
+        LOGGER.debug("Right top/bottom " + colorString( topRightColor ) + "=>" + colorString( bottomRightColor ) + "=" + colorDistance( topRightColor,bottomRightColor) );  
+        LOGGER.debug("Bottom left/right " + colorString( bottomLeftColor ) + "=>" + colorString( bottomRightColor ) + "=" + colorDistance( bottomLeftColor,bottomRightColor) );  
+
+        int lowDistance = Integer.MAX_VALUE;
+        int baseColor = 0;
+        
+        int distanceTopLeft = (int) colorDistance( topLeftColor,topRightColor) + (int) colorDistance( topLeftColor,bottomLeftColor);
+        if ( distanceTopLeft < lowDistance ) {
+            lowDistance = distanceTopLeft;
+            baseColor = topLeftColor;
+        }
+        int distanceTopRight =  (int) colorDistance( topLeftColor,topRightColor) + (int) colorDistance( topRightColor,bottomRightColor);
+        if ( distanceTopRight < lowDistance ) {
+            lowDistance = distanceTopRight;
+            baseColor = topRightColor;
+        }
+        int distanceBottomLeft = (int) colorDistance( topLeftColor,bottomLeftColor) + (int) colorDistance( bottomLeftColor,bottomRightColor);
+        if ( distanceBottomLeft < lowDistance ) {
+            lowDistance = distanceBottomLeft;
+            baseColor = bottomLeftColor;
+        }
+        int distanceBottomRight = (int) colorDistance( topRightColor,bottomRightColor)  + (int) colorDistance( bottomLeftColor,bottomRightColor);
+        if ( distanceBottomRight < lowDistance ) {
+            lowDistance = distanceBottomRight;
+            baseColor = bottomRightColor;
+        }
+        LOGGER.info( "Color " + colorString( baseColor ) + " is background with min distance of " + lowDistance );
+        return baseColor;        
+    }
+
+    /** Returns distance between ARGB pixels by the sqrt of the squares. 
      * @param a
      * @param b
-     * @param tolerance
      * @return
      */
-    private static boolean colorWithinTolerance(int a, int b, double tolerance) {
+    private static double colorDistance(int a, int b ) {
         int aAlpha = (int) ((a & 0xFF000000) >>> 24); // Alpha level
         int aRed = (int) ((a & 0x00FF0000) >>> 16); // Red level
         int aGreen = (int) ((a & 0x0000FF00) >>> 8); // Green level
@@ -548,11 +632,64 @@ public class PdfCL {
 
         double distance = Math.sqrt((aAlpha - bAlpha) * (aAlpha - bAlpha) + (aRed - bRed) * (aRed - bRed)
                 + (aGreen - bGreen) * (aGreen - bGreen) + (aBlue - bBlue) * (aBlue - bBlue));
+        return distance;
+    }
+    
+    /** MAX_ARGB_DISTANCE is sqrt of 4 * 255^2, for example (0,0,0,0) and (255,255,255,255) */
+    public static double MAX_ARGB_DISTANCE = Math.sqrt( 4.0d * Math.pow( 255.0, 2.0 ));
+    
+    /**
+     * Return true or false if a given int-encoded ARGB pixel is within a certain percentage distance of another.
+     * @param a
+     * @param b
+     * @param tolerance
+     * @return
+     */
+    private static boolean colorWithinTolerance(int a, int b, double tolerance) {
 
-        // 510.0 is the maximum distance between two colors
-        // (0,0,0,0 -> 255,255,255,255)
-        double percentAway = distance / 510.0d;
-
-        return (percentAway > tolerance);
+        double distance = colorDistance (a, b );
+        double percentAway = distance / MAX_ARGB_DISTANCE;
+        // LOGGER.info( "Percent away=" + percentAway + ", tolerance=" + tolerance);
+        return (percentAway < tolerance);
+    }
+    
+    /** Returns 4 tuple of ARGB in decimal. 
+     * @param a
+     * @return
+     */
+    private static String colorString(int a) {
+        int aAlpha = (int) ((a & 0xFF000000) >>> 24); // Alpha level
+        int aRed = (int) ((a & 0x00FF0000) >>> 16); // Red level
+        int aGreen = (int) ((a & 0x0000FF00) >>> 8); // Green level
+        int aBlue = (int) (a & 0x000000FF); // Blue level
+        return String.format("(%d,%d,%d,%d)",aAlpha,aRed,aGreen,aBlue);
+    }    
+    
+    /** Checks null and range and returns an int */
+    public static int argbInt( String a, String r, String g, String b) {
+        int color = 0;
+        if ( null != a ) {
+            int aInt = Integer.parseInt(a);
+            if (aInt <0 || aInt > 255) {
+                throw new IllegalArgumentException( "alpha value from \"" + a + "\" is not legal");
+            }
+            color |= aInt << 24;
+        }
+        int rInt = Integer.parseInt(r);
+        if (rInt <0 || rInt > 255) {
+            throw new IllegalArgumentException( "red value from \"" + r + "\" is not legal");
+        }
+        color |= rInt << 16;
+        int gInt = Integer.parseInt(g);
+        if (gInt <0 || gInt > 255) {
+            throw new IllegalArgumentException( "green value from \"" + g + "\" is not legal");
+        }
+        color |= gInt << 8;
+        int bInt = Integer.parseInt(b);
+        if (bInt <0 || bInt > 255) {
+            throw new IllegalArgumentException( "blue value from \"" + b + "\" is not legal");
+        }
+        color |= bInt;
+        return color;
     }
 }
