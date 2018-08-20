@@ -524,13 +524,17 @@ public class PdfCL {
      * @param tolerance
      * @return a cropped BufferedImage or null for no changes
      */
-    public static BufferedImage getCroppedImage(BufferedImage source, int baseColor, double tolerance) {
+    public static BufferedImage getCroppedImage(BufferedImage source, int baseColor, double tolerance) throws IOException {
         int width = source.getWidth();
         int height = source.getHeight();
+        boolean imageCloseness = false; // turn on/off writing of closeness image
 
+        // Draw an image of pixel distances.
+        BufferedImage closenessImage = new BufferedImage( width, height, source.getType() );
         if ( -2 == baseColor ) {
             baseColor = calculateBaseColor( source );
         }
+        LOGGER.info( "Base color=" + colorString( baseColor ));
         
         int topY = Integer.MAX_VALUE, topX = Integer.MAX_VALUE;
         int bottomY = -1, bottomX = -1;
@@ -538,9 +542,16 @@ public class PdfCL {
         int bottomXAdjustCount = 0;
         int topYAdjustCount = 0;
         int bottomYAdjustCount = 0;
+        int inTolerance = 0;
+        int outTolerance = 0;
+        int pixels = 0;
         for (int y = 0; y < height; y++) {
             for (int x = 0; x < width; x++) {
+                pixels++;
+                // double distance = colorDistance( baseColor, source.getRGB( x, y ) );
                 if (colorWithinTolerance(baseColor, source.getRGB( x, y ), tolerance)) {
+                    closenessImage.setRGB(x,y, argbInt( "255", "0", "255", "0"));
+                    inTolerance++;
                     if (x < topX) {
                         topX = x;
                         topXAdjustCount++;
@@ -557,10 +568,15 @@ public class PdfCL {
                         bottomY = y;
                         bottomYAdjustCount++;
                     }
+                } else {
+                    closenessImage.setRGB(x,y, argbInt( "255", "255", "0", "0"));
+                    outTolerance++;
                 }
             }
         }
-        LOGGER.info( "Edge adjustments: topX=" + topXAdjustCount + ", topY=" + topXAdjustCount + ", bottomX=" + bottomXAdjustCount + ", bottomY=" + bottomXAdjustCount);
+        LOGGER.info( "Pixels/in tolerance/out tolerance=" + pixels + "/" + inTolerance + "/" + outTolerance );
+        LOGGER.info( "Edge adjustments: topX=" + topX + ", topY=" + topY + ", bottomX=" + bottomX + ", bottomY=" + bottomY);
+        LOGGER.info( "Edge adjustment counts: topX=" + topXAdjustCount + ", topY=" + topYAdjustCount + ", bottomX=" + bottomXAdjustCount + ", bottomY=" + bottomYAdjustCount);
         if ( 0 == topXAdjustCount && 0 == topYAdjustCount && 0 == bottomXAdjustCount && 0 == bottomYAdjustCount) {
             return null;
         }
@@ -568,6 +584,11 @@ public class PdfCL {
                 source.getType());
         destination.getGraphics().drawImage(source, 0, 0, destination.getWidth(), destination.getHeight(),
              topX, topY, bottomX+1, bottomY+1, null);
+
+        if ( imageCloseness ) {
+            ImageIO.write(closenessImage, "jpg", new File( "resources/extractImages/closenessMap.jpg"));
+        }
+        closenessImage.flush();
 
         return destination;
     }
@@ -610,7 +631,7 @@ public class PdfCL {
             lowDistance = distanceBottomRight;
             baseColor = bottomRightColor;
         }
-        LOGGER.info( "Color " + colorString( baseColor ) + " is background with min distance of " + lowDistance );
+        LOGGER.info( "Color " + colorString( baseColor ) + " selected as background with min distance of " + lowDistance );
         return baseColor;        
     }
 
@@ -646,11 +667,10 @@ public class PdfCL {
      * @return
      */
     private static boolean colorWithinTolerance(int a, int b, double tolerance) {
-
-        double distance = colorDistance (a, b );
+        double distance = colorDistance (a, b);
         double percentAway = distance / MAX_ARGB_DISTANCE;
         // LOGGER.info( "Percent away=" + percentAway + ", tolerance=" + tolerance);
-        return (percentAway < tolerance);
+        return (percentAway > tolerance); // strange name, but yes this reports large distances
     }
     
     /** Returns 4 tuple of ARGB in decimal. 
