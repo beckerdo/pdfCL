@@ -1,7 +1,9 @@
 package info.danbecker.pdfcl;
 
+import java.io.ByteArrayInputStream;
 import java.io.File;
 import java.io.IOException;
+import java.io.StringWriter;
 import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -14,6 +16,13 @@ import java.util.Set;
 
 import java.awt.image.BufferedImage;
 import javax.imageio.ImageIO;
+import javax.xml.parsers.DocumentBuilder;
+import javax.xml.parsers.DocumentBuilderFactory;
+import javax.xml.transform.OutputKeys;
+import javax.xml.transform.Transformer;
+import javax.xml.transform.TransformerFactory;
+import javax.xml.transform.dom.DOMSource;
+import javax.xml.transform.stream.StreamResult;
 
 import org.apache.commons.cli.CommandLine;
 import org.apache.commons.cli.CommandLineParser;
@@ -27,6 +36,7 @@ import org.slf4j.LoggerFactory;
 import com.itextpdf.io.image.ImageDataFactory;
 import com.itextpdf.io.source.RandomAccessSourceFactory;
 import com.itextpdf.kernel.colors.DeviceGray;
+import com.itextpdf.kernel.geom.PageSize;
 import com.itextpdf.kernel.geom.Rectangle;
 import com.itextpdf.kernel.pdf.PdfArray;
 import com.itextpdf.kernel.pdf.PdfBoolean;
@@ -378,8 +388,8 @@ public class PdfCL {
                    if ( null != image ) {
                        LOGGER.info("Page " + i + ", resource name=" + name.toString() + ", size=" + image.getWidth() +"x" + image.getHeight() );   
                        File outputfile = new File(dest, "p" + i + "-" + name.getValue() + "." + image.identifyImageType().toString().toLowerCase() );
-                       // BufferedImage bi = image.getBufferedImage();
-                       // ImageIO.write(bi, "jpg", outputfile);
+                       BufferedImage bi = image.getBufferedImage();
+                       ImageIO.write(bi, "jpg", outputfile);
                        LOGGER.info( "Output " + outputfile.getName());
                    }
                }
@@ -408,22 +418,59 @@ public class PdfCL {
         canvas.close();
         return new Image(template);
     }
- 
-//    public static final String IMAGE1 = "resources/img/bruno.jpg";
-//    public static final String IMAGE2 = "resources/img/dog.bmp";
-//    public static final String IMAGE3 = "resources/img/fox.bmp";
-//    public static final String IMAGE4 = "resources/img/bruno_ingeborg.jpg";
-    
+
+    /** Adds a list of files or contents of directories as images to an destination pPDF. */
     protected void joinImages(String[] srcs, String dest ) throws Exception {
+        mkdirs(dest);        
         PdfDocument pdfDoc = new PdfDocument(new PdfWriter(dest));
         Document doc = new Document(pdfDoc);
-        Image image = new Image(ImageDataFactory.create(srcs[0])).scaleToFit(200, 350);
-        doc.add(getWatermarkedImage(pdfDoc, image, "Bruno"));
-        doc.add(getWatermarkedImage(pdfDoc, new Image(ImageDataFactory.create(srcs[1])), "Dog"));
-        doc.add(getWatermarkedImage(pdfDoc, new Image(ImageDataFactory.create(srcs[2])), "Fox"));
-        image = new Image(ImageDataFactory.create(srcs[3])).scaleToFit(200, 350);
-        doc.add(getWatermarkedImage(pdfDoc, image, "Bruno and Ingeborg"));
+        // Document doc = new Document(pdfDoc, PageSize.LETTER);
+        Rectangle pageSize = doc.getPageEffectiveArea(pdfDoc.getDefaultPageSize());
+        LOGGER.info("page size=" + pageSize.toString()); 
+        
+        // Copy 
+        for (String src : srcs) {
+            File fileSrc = new File( src );
+            if ( fileSrc.exists() && fileSrc.canRead()) {
+                if ( fileSrc.isDirectory() ) {
+                    File [] contents = fileSrc.listFiles( new ITextImageFileFilter() );
+                    for ( File inputFile : contents) {
+                        if ( inputFile.exists() && inputFile.canRead()) {
+                            Image image = new Image(ImageDataFactory.create(inputFile.getPath()));
+                            float scale = 1.0f;
+                            if ( image.getImageWidth() > pageSize.getWidth() || image.getImageHeight() > pageSize.getHeight()) {
+                                float xScale = pageSize.getWidth() / image.getImageWidth();
+                                float yScale = pageSize.getHeight() / image.getImageHeight();
+                                if ( xScale < yScale ) {
+                                    scale = xScale;
+                                } else {                                    
+                                    scale = yScale;
+                                }
+                                // LOGGER.info("x/y/scale=" + xScale + "/" + yScale + "/" + scale ); 
+                                image.scale( scale,  scale );
+                            }
+                            // float maxWidth = PageSize.A4.getWidth() - pageMargin;
+                            LOGGER.info("Joining file \"" + inputFile.getPath() + "\"" + 
+                               ", size=" + image.getImageWidth() + "x" + image.getImageHeight() +
+                               ", scaled=" + image.getImageScaledWidth() + "x" + image.getImageScaledHeight());
+                            doc.add(image);
+                        } else {
+                            LOGGER.info("File \"" + inputFile.getName() + "\" exists=" + inputFile.exists() + ", canRead=" + inputFile.canRead() );                            
+                        }
+                    }
+                } else {
+                    LOGGER.info("Joining file \"" + fileSrc.getPath() + "\""  );
+                    Image image = new Image(ImageDataFactory.create(fileSrc.getPath()));
+                    // image.setAutoScale(true);
+                    doc.add(image);
+                }
+            } else {
+                LOGGER.info("File \"" + fileSrc + "\" exists=" + fileSrc.exists() + ", canRead=" + fileSrc.canRead() );
+            }
+        } // srcs
+        
         doc.close();
+        pdfDoc.close();
     }
 
     /** 
@@ -451,6 +498,7 @@ public class PdfCL {
         } // srcs
     }
 
+    /** Visit each object in the PdfObject tree, by recursing through dictionaries and arrays. */
     public static void visit( Set<PdfObject> visited, int element, PdfName pdfName, PdfObject pdfObject, int level ) {
         if ( null == pdfObject) {
             return;
@@ -476,6 +524,10 @@ public class PdfCL {
             } else if (PdfName.Form.equals(subtype)) {
                 PdfFormXObject form = new PdfFormXObject(pdfStream);
                 LOGGER.info( prefix.toString() + "pdfName=" + pdfName.getValue() + ", object" + pdfObjectString( pdfObject)  + " (" + form.getWidth() + "x" + form.getHeight() + ")");                
+            } else if (PdfName.XML.equals(subtype)) {
+                String xmlString = pdfStreamXMLtoString( pdfStream );
+                LOGGER.info(prefix.toString() + "pdfName=" + pdfName.getValue() + ", object"
+                        + pdfObjectString(pdfObject) + " (" + xmlString + ")");
             } else {
                 LOGGER.info(prefix.toString() + "pdfName=" + pdfName.getValue() + ", object" + pdfObjectString( pdfObject)  );                                
             }
@@ -517,8 +569,31 @@ public class PdfCL {
             LOGGER.info(  prefix.toString() + "pdfName=" + pdfName.getValue()  + ", object=" + pdfObjectString( pdfObject) + ", value=null" );                
         } else {
             LOGGER.info(  prefix.toString() + "pdfName=" + pdfName.getValue() + ", object=" + pdfObjectString( pdfObject));                
-        }            
-        
+        }     
+    }
+    
+    /** Convert a stream of XML to a String. */
+    public static String pdfStreamXMLtoString( PdfStream pdfStream ) {
+        DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+        factory.setValidating(false);
+        factory.setIgnoringElementContentWhitespace(true);
+        try {
+            DocumentBuilder builder = factory.newDocumentBuilder();
+            ByteArrayInputStream bais = new ByteArrayInputStream(pdfStream.getBytes());
+            org.w3c.dom.Document doc = builder.parse(bais);
+            // Do something with the document here.
+            TransformerFactory tf = TransformerFactory.newInstance();
+            Transformer transformer = tf.newTransformer();
+            transformer.setOutputProperty(OutputKeys.OMIT_XML_DECLARATION, "yes");
+            StringWriter writer = new StringWriter();
+            transformer.transform(new DOMSource(doc), new StreamResult(writer));
+            // Replace new lines, returns, and whitespace before tags.
+            String xmlString = writer.getBuffer().toString().replaceAll("\n|\r", "").replaceAll("\\s+<", "<");
+            return xmlString;
+        } catch (Exception e) {
+            LOGGER.error("Exception parsing metadata e=" + e);
+        }
+        return "";
     }
     
     /** Tells what type of object this is. */
