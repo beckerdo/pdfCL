@@ -157,12 +157,14 @@ public class PdfCL {
         // line.getArgList(); // Retrieve any left-over non-recognized options and
         // arguments
 
-        LOGGER.info("hasHelp=" + line.hasOption("help"));
         // Gather command line arguments for execution
         if (line.hasOption("help")) {
             final HelpFormatter formatter = new HelpFormatter();
             formatter.printHelp("java -jar pdfcl.jar <options> info.danbecker.pdfcl.PdfCL", options);
+            LOGGER.info("java version=" + Runtime.class.getPackage().getImplementationVersion());
             System.exit(0);
+        } else {
+            LOGGER.info("help=" + line.hasOption("help"));            
         }
         if (line.hasOption("verb")) {
             verb = line.getOptionValue("verb");
