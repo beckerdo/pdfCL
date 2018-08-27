@@ -365,60 +365,62 @@ public class PdfCL {
             LOGGER.info("Source file=" + src + ", numPages=" + srcDoc.getNumberOfPages() + ", numObjects=" + srcDoc.getNumberOfPdfObjects());
 
             // Access via object number
-            for (int i = 1; i <= srcDoc.getNumberOfPdfObjects(); i++) {
-                PdfObject obj = srcDoc.getPdfObject(i);
-                if (obj != null && obj.isStream()) {                   
-                    PdfStream stream = (PdfStream) obj;
-                    PdfName pdfName = stream.getAsName(PdfName.Subtype);
-                    if ( null != pdfName ) {
-                        LOGGER.info("Page " + i + ", resource name=" + pdfName.toString() + ", typeName=" + getNameString(pdfName));
-                    } else {
-                        LOGGER.info("Page " + i + ", resource name=null, typeName=" + getNameString(pdfName));                        
-                    }
-                    
-                    if (PdfName.Image.equals(pdfName)) {
-                        LOGGER.info("Object " + i + ", resource name=" + pdfName.toString() + ", typeName=" + getNameString(pdfName) + " image");
-                        PdfImageXObject image = new PdfImageXObject(stream);
-                        if ( null != image ) {
-                            LOGGER.info("Page " + i + ", resource name=" + pdfName.toString() + 
-                                    ", size=" + image.getWidth() +"x" + image.getHeight() +
-                                    ", type=" + image.identifyImageType() 
-                                    );   
-                            File outputfile = new File(dest, "p" + i + "-" + pdfName.getValue() + "." + image.identifyImageType().toString().toLowerCase() );
-                            BufferedImage bi = image.getBufferedImage();
-                            // ImageIO.write(bi, "jpg", outputfile); // TIF requires Java 9
-                            ImageIO.write(bi, image.identifyImageFileExtension().toLowerCase(), outputfile);
-                            LOGGER.info( "Output " + outputfile.getName());
-                        }
-                    } // image
-                } // if Stream
-            } // object number
+//            for (int i = 1; i <= srcDoc.getNumberOfPdfObjects(); i++) {
+//                PdfObject obj = srcDoc.getPdfObject(i);
+//                if (obj != null && obj.isStream()) {                   
+//                    PdfStream stream = (PdfStream) obj;
+//                    PdfName pdfName = stream.getAsName(PdfName.Subtype);
+//                    if ( null != pdfName ) {
+//                        LOGGER.info("Page " + i + ", resource name=" + pdfName.toString() + ", typeName=" + getNameString(pdfName));
+//                    } else {
+//                        LOGGER.info("Page " + i + ", resource name=null, typeName=" + getNameString(pdfName));                        
+//                    }
+//                    
+//                    if (PdfName.Image.equals(pdfName)) {
+//                        LOGGER.info("Object " + i + ", resource name=" + pdfName.toString() + ", typeName=" + getNameString(pdfName) + " image");
+//                        PdfImageXObject image = new PdfImageXObject(stream);
+//                        if ( null != image ) {
+//                            outputImage( i, pdfName, image );
+//                        }
+//                    } // image
+//                } // if Stream
+//            } // object number
 
             // Access via page number
-//            for (int i = 1; i <= srcDoc.getNumberOfPages(); i++) {
-//               PdfPage page = srcDoc.getPage(i);
-//               PdfResources resources = page.getResources();
-//
-//               Set<PdfName> names = resources.getResourceNames();
-//               // LOGGER.info("Page " + i + ", resource count=" + names.size());
-//               for (PdfName name : names) {
-//                   LOGGER.info("Page " + i + ", resource name=" + name.toString() + ", typeName=" + getNameString(name));
-//                   PdfImageXObject image = resources.getImage(name);
-//                   if ( null != image ) {
-//                       LOGGER.info("Page " + i + ", resource name=" + name.toString() + 
-//                               ", size=" + image.getWidth() +"x" + image.getHeight() +
-//                               ", type=" + image.identifyImageType() 
-//                               );   
-//                       File outputfile = new File(dest, "p" + i + "-" + name.getValue() + "." + image.identifyImageType().toString().toLowerCase() );
-//                       BufferedImage bi = image.getBufferedImage();
-//                       // ImageIO.write(bi, "jpg", outputfile); // TIF requires Java 9
-//                       ImageIO.write(bi, image.identifyImageFileExtension().toLowerCase(), outputfile);
-//                       LOGGER.info( "Output " + outputfile.getName());
-//                   }
-//               }
-//            } // pages            
+            for (int i = 1; i <= srcDoc.getNumberOfPages(); i++) {
+               PdfPage page = srcDoc.getPage(i);
+               PdfResources resources = page.getResources();
+
+               Set<PdfName> names = resources.getResourceNames();
+               // LOGGER.info("Page " + i + ", resource count=" + names.size());
+               for (PdfName name : names) {
+                   LOGGER.info("Page " + i + ", resource name=" + name.toString() + ", typeName=" + getNameString(name));
+                   PdfImageXObject image = resources.getImage(name);
+                   if ( null != image ) {
+                      outputImage( i, name, image );                     
+                   }
+               }
+            } // pages            
            srcDoc.close();
         } // srcs
+    }
+
+    /** Output file from given Image */
+    public static void outputImage( int element, PdfName pdfName, PdfImageXObject image ) throws IOException {
+        if ( null != image ) {
+            LOGGER.info("Page " + element + ", resource name=" + pdfName.toString() + 
+                    ", size=" + image.getWidth() +"x" + image.getHeight() +
+                    ", type=" + image.identifyImageType() 
+                    );   
+            File outputfile = new File(dest, "e" + element + "-" + pdfName.getValue() + "." + image.identifyImageType().toString().toLowerCase() );
+            BufferedImage bi = image.getBufferedImage();
+            // ImageIO.write(bi, "jpg", outputfile); // TIF requires Java 9
+            ImageIO.write(bi, image.identifyImageFileExtension().toLowerCase(), outputfile);
+            LOGGER.info( "Output " + outputfile.getName());
+        } else {
+            LOGGER.info( "Element=" + element + ", name=" + pdfName + "image=null");            
+        }
+        
     }
     
     public static String getNameString( PdfName pdfName ) {
